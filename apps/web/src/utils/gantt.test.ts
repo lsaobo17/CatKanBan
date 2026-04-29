@@ -12,6 +12,7 @@ const task: Task = {
   dueDate: "2026-05-05",
   priority: "medium",
   progress: 20,
+  assigneeId: null,
   assigneeName: "",
   position: 0,
   createdAt: "2026-05-01T00:00:00.000Z",

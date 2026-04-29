@@ -5,10 +5,11 @@ import { applyTaskMove, type OptimisticTaskMove } from "../utils/boardMove";
 
 const boardQueryKey = ["board"] as const;
 
-export function useBoard() {
+export function useBoard(enabled = true) {
   return useQuery({
     queryKey: boardQueryKey,
-    queryFn: api.getBoard
+    queryFn: api.getBoard,
+    enabled
   });
 }
 

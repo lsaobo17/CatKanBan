@@ -1,13 +1,22 @@
 import { PrismaClient } from "@prisma/client";
 import { env } from "./env.js";
 import { PrismaBoardRepository } from "./repositories/prismaBoardRepository.js";
+import { PrismaUserRepository } from "./repositories/prismaUserRepository.js";
+import { AuthService } from "./services/authService.js";
 import { buildServer } from "./server.js";
 
 const prisma = new PrismaClient();
 const repository = new PrismaBoardRepository(prisma);
-const server = buildServer({ repository });
+const userRepository = new PrismaUserRepository(prisma);
+const authService = new AuthService(userRepository);
+const server = buildServer({ repository, userRepository });
 
 await repository.seedDefaultBoard();
+await authService.seedAdmin({
+  username: env.ADMIN_USERNAME,
+  password: env.ADMIN_PASSWORD,
+  name: env.ADMIN_NAME
+});
 
 try {
   await server.listen({ host: env.API_HOST, port: env.API_PORT });
@@ -26,4 +35,3 @@ const shutdown = async () => {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
-

@@ -8,10 +8,23 @@ export const DEFAULT_COLUMNS = [
 ] as const;
 
 export const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
+export const USER_ROLES = ["admin", "member"] as const;
 
 export type ColumnKey = (typeof DEFAULT_COLUMNS)[number]["key"];
 export type Priority = (typeof PRIORITIES)[number];
+export type UserRole = (typeof USER_ROLES)[number];
 export type ViewMode = "board" | "gantt";
+
+export interface UserSummary {
+  id: string;
+  username: string;
+  email?: string | null;
+  name: string;
+  role: UserRole;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface Project {
   id: string;
@@ -31,6 +44,7 @@ export interface Task {
   dueDate: string;
   priority: Priority;
   progress: number;
+  assigneeId: string | null;
   assigneeName: string;
   position: number;
   createdAt: string;
@@ -49,6 +63,7 @@ export interface BoardColumn {
 export interface BoardPayload {
   project: Project;
   columns: BoardColumn[];
+  users: UserSummary[];
 }
 
 export interface CreateTaskRequest {
@@ -59,6 +74,7 @@ export interface CreateTaskRequest {
   dueDate: string;
   priority: Priority;
   progress?: number;
+  assigneeId?: string | null;
   assigneeName?: string;
 }
 
@@ -70,6 +86,7 @@ export interface UpdateTaskRequest {
   dueDate?: string;
   priority?: Priority;
   progress?: number;
+  assigneeId?: string | null;
   assigneeName?: string;
 }
 
@@ -78,8 +95,30 @@ export interface MoveTaskRequest {
   position?: number;
 }
 
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface AuthMePayload {
+  user: UserSummary;
+}
+
+export interface CreateUserRequest {
+  password: string;
+  username: string;
+  role?: UserRole;
+}
+
+export interface UpdateUserRequest {
+  name?: string;
+  password?: string;
+  username?: string;
+  role?: UserRole;
+  isActive?: boolean;
+}
+
 export interface ApiErrorPayload {
   error: string;
   message: string;
 }
-

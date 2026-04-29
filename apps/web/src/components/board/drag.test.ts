@@ -10,6 +10,7 @@ const board: BoardPayload = {
     createdAt: "2026-05-01T00:00:00.000Z",
     updatedAt: "2026-05-01T00:00:00.000Z"
   },
+  users: [],
   columns: [
     {
       id: "column-todo",
@@ -28,6 +29,7 @@ const board: BoardPayload = {
           dueDate: "2026-05-02",
           priority: "medium",
           progress: 0,
+          assigneeId: null,
           assigneeName: "",
           position: 0,
           createdAt: "2026-05-01T00:00:00.000Z",
@@ -52,6 +54,7 @@ const board: BoardPayload = {
           dueDate: "2026-05-04",
           priority: "high",
           progress: 30,
+          assigneeId: null,
           assigneeName: "",
           position: 0,
           createdAt: "2026-05-01T00:00:00.000Z",

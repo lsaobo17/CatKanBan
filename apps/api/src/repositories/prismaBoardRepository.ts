@@ -2,15 +2,14 @@ import {
   DEFAULT_COLUMNS,
   DEFAULT_PROJECT_ID,
   type BoardColumn,
-  type BoardPayload,
   type CreateTaskRequest,
   type MoveTaskRequest,
   type Project,
   type Task
 } from "../../../../packages/shared/src/index.js";
-import type { Column, Prisma, PrismaClient, Project as PrismaProject, Task as PrismaTask } from "@prisma/client";
+import type { Column, Prisma, PrismaClient, Project as PrismaProject, Task as PrismaTask, User } from "@prisma/client";
 import { NotFoundError } from "../errors.js";
-import type { BoardRepository, TaskUpdateData } from "./boardRepository.js";
+import type { BoardData, BoardRepository, TaskUpdateData } from "./boardRepository.js";
 
 export class PrismaBoardRepository implements BoardRepository {
   constructor(private readonly prisma: PrismaClient) {}
@@ -50,7 +49,7 @@ export class PrismaBoardRepository implements BoardRepository {
     );
   }
 
-  async getBoard(): Promise<BoardPayload> {
+  async getBoard(): Promise<BoardData> {
     const project = await this.prisma.project.findUnique({
       where: { id: DEFAULT_PROJECT_ID },
       include: {
@@ -58,7 +57,8 @@ export class PrismaBoardRepository implements BoardRepository {
           orderBy: { position: "asc" },
           include: {
             tasks: {
-              orderBy: { position: "asc" }
+              orderBy: { position: "asc" },
+              include: { assignee: true }
             }
           }
         }
@@ -76,12 +76,13 @@ export class PrismaBoardRepository implements BoardRepository {
   }
 
   async getTask(id: string) {
-    const task = await this.prisma.task.findUnique({ where: { id } });
+    const task = await this.prisma.task.findUnique({ where: { id }, include: { assignee: true } });
     return task ? mapTask(task) : null;
   }
 
   async createTask(input: CreateTaskRequest): Promise<Task> {
     await this.ensureColumn(input.columnId);
+    const assignee = await this.resolveAssignee(input.assigneeId);
     const position = await this.nextPosition(input.columnId);
     const task = await this.prisma.task.create({
       data: {
@@ -93,15 +94,18 @@ export class PrismaBoardRepository implements BoardRepository {
         dueDate: toDate(input.dueDate),
         priority: input.priority,
         progress: input.progress ?? 0,
-        assigneeName: input.assigneeName ?? "",
+        assigneeId: assignee === undefined ? null : assignee?.id ?? null,
+        assigneeName: assignee?.name ?? input.assigneeName ?? "",
         position
-      }
+      },
+      include: { assignee: true }
     });
     return mapTask(task);
   }
 
   async updateTask(id: string, input: TaskUpdateData): Promise<Task> {
     await this.ensureTask(id);
+    const assignee = await this.resolveAssignee(input.assigneeId);
     const task = await this.prisma.task.update({
       where: { id },
       data: {
@@ -111,8 +115,10 @@ export class PrismaBoardRepository implements BoardRepository {
         dueDate: input.dueDate ? toDate(input.dueDate) : undefined,
         priority: input.priority,
         progress: input.progress,
-        assigneeName: input.assigneeName
-      }
+        assigneeId: assignee === undefined ? undefined : assignee?.id ?? null,
+        assigneeName: assignee === undefined ? input.assigneeName : assignee?.name ?? input.assigneeName ?? ""
+      },
+      include: { assignee: true }
     });
     return mapTask(task);
   }
@@ -139,7 +145,7 @@ export class PrismaBoardRepository implements BoardRepository {
       }
 
       await this.reorderTasks(tx, targetTasks, input.columnId);
-      const updated = await tx.task.findUnique({ where: { id } });
+      const updated = await tx.task.findUnique({ where: { id }, include: { assignee: true } });
       if (!updated) {
         throw new NotFoundError("任务不存在");
       }
@@ -177,6 +183,21 @@ export class PrismaBoardRepository implements BoardRepository {
     return task;
   }
 
+  private async resolveAssignee(assigneeId: string | null | undefined) {
+    if (assigneeId === undefined) {
+      return undefined;
+    }
+    if (assigneeId === null) {
+      return null;
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: assigneeId } });
+    if (!user || !user.isActive) {
+      throw new NotFoundError("User not found");
+    }
+    return user;
+  }
+
   private async nextPosition(columnId: string) {
     const aggregate = await this.prisma.task.aggregate({
       where: { columnId },
@@ -200,7 +221,8 @@ export class PrismaBoardRepository implements BoardRepository {
   }
 }
 
-type PrismaColumnWithTasks = Column & { tasks: PrismaTask[] };
+type PrismaTaskWithAssignee = PrismaTask & { assignee: User | null };
+type PrismaColumnWithTasks = Column & { tasks: PrismaTaskWithAssignee[] };
 
 function mapProject(project: PrismaProject): Project {
   return {
@@ -223,7 +245,7 @@ function mapColumn(column: PrismaColumnWithTasks): BoardColumn {
   };
 }
 
-function mapTask(task: PrismaTask): Task {
+function mapTask(task: PrismaTaskWithAssignee): Task {
   return {
     id: task.id,
     projectId: task.projectId,
@@ -234,7 +256,8 @@ function mapTask(task: PrismaTask): Task {
     dueDate: toDateKey(task.dueDate),
     priority: task.priority as Task["priority"],
     progress: task.progress,
-    assigneeName: task.assigneeName,
+    assigneeId: task.assigneeId,
+    assigneeName: task.assignee?.name ?? task.assigneeName,
     position: task.position,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString()

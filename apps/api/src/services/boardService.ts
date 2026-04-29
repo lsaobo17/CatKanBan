@@ -76,6 +76,7 @@ function parseCreateTask(body: unknown): CreateTaskRequest {
     priority,
     progress,
     description: readOptionalString(body.description),
+    assigneeId: readOptionalNullableString(body.assigneeId),
     assigneeName: readOptionalString(body.assigneeName)
   };
 }
@@ -109,6 +110,9 @@ function parseUpdateTask(body: unknown): UpdateTaskRequest {
   }
   if ("assigneeName" in body) {
     input.assigneeName = readOptionalString(body.assigneeName);
+  }
+  if ("assigneeId" in body) {
+    input.assigneeId = readOptionalNullableString(body.assigneeId);
   }
 
   return input;
@@ -145,6 +149,20 @@ function readOptionalString(value: unknown) {
     throw new ValidationError("文本字段格式错误");
   }
   return value.trim();
+}
+
+function readOptionalNullableString(value: unknown) {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null || value === "") {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new ValidationError("鏂囨湰瀛楁鏍煎紡閿欒");
+  }
+  const text = value.trim();
+  return text.length > 0 ? text : null;
 }
 
 function readRequiredDate(value: unknown, label: string) {

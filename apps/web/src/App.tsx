@@ -1,30 +1,81 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App as AntApp, Button, ConfigProvider, Empty, Segmented, Spin, Statistic, Tooltip, Typography } from "antd";
 import zhCN from "antd/locale/zh_CN";
-import { ChartGantt, LayoutGrid, Plus, Settings } from "lucide-react";
+import { ChartGantt, LayoutGrid, LogOut, Plus, Settings, Users } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
-import type { MoveTaskRequest, Task, UpdateTaskRequest, ViewMode } from "../../../packages/shared/src/index";
+import type { AuthMePayload, MoveTaskRequest, Task, UpdateTaskRequest, ViewMode } from "../../../packages/shared/src/index";
+import { ApiUnauthorizedError, api } from "./api/client";
 import { BoardView } from "./components/BoardView";
 import { GanttView } from "./components/GanttView";
+import { LoginPage } from "./components/LoginPage";
 import { SettingsDrawer } from "./components/SettingsDrawer";
 import { TaskDrawer, type TaskFormValues } from "./components/TaskDrawer";
+import { UserManagementDrawer } from "./components/UserManagementDrawer";
 import { useBoard, useCreateTask, useDeleteTask, useMoveTask, useUpdateTask } from "./hooks/useBoard";
 import { useUiStyle } from "./hooks/useUiStyle";
 import { getUiStyleOption } from "./theme/uiStyles";
 import "./styles.css";
 
+const authQueryKey = ["auth", "me"] as const;
+
 export default function App() {
   const { message } = AntApp.useApp();
+  const queryClient = useQueryClient();
   const [viewMode, setViewMode] = useState<ViewMode>("board");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [usersOpen, setUsersOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [uiStyle, setUiStyle] = useUiStyle();
-  const boardQuery = useBoard();
+
+  const authQuery = useQuery<AuthMePayload | null>({
+    queryKey: authQueryKey,
+    queryFn: api.getMe,
+    retry: false
+  });
+  const currentUser = authQuery.data?.user;
+  const boardQuery = useBoard(Boolean(currentUser));
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
   const moveTask = useMoveTask();
   const moveTaskMutate = moveTask.mutate;
   const deleteTask = useDeleteTask();
+
+  const login = useMutation({
+    mutationFn: api.login,
+    onSuccess: (payload: AuthMePayload) => {
+      queryClient.setQueryData<AuthMePayload | null>(authQueryKey, payload);
+      queryClient.invalidateQueries({ queryKey: ["board"] });
+      message.success("登录成功");
+    },
+    onError: (error) => {
+      if (error instanceof ApiUnauthorizedError) {
+        message.error("用户名或密码错误");
+        return;
+      }
+      message.error("登录失败，请稍后重试");
+    }
+  });
+
+  const resetAuthenticatedState = useCallback(() => {
+    setDrawerOpen(false);
+    setSettingsOpen(false);
+    setUsersOpen(false);
+    setEditingTask(null);
+    queryClient.setQueryData<AuthMePayload | null>(authQueryKey, null);
+    queryClient.removeQueries({ queryKey: ["board"] });
+    queryClient.removeQueries({ queryKey: ["admin-users"] });
+  }, [queryClient]);
+
+  const logout = useMutation({
+    mutationFn: api.logout,
+    onMutate: async () => {
+      await queryClient.cancelQueries();
+    },
+    onSettled: () => {
+      resetAuthenticatedState();
+    }
+  });
 
   const tasks = useMemo(
     () => boardQuery.data?.columns.flatMap((column) => column.tasks) ?? [],
@@ -97,13 +148,40 @@ export default function App() {
     );
   };
 
+  if (authQuery.isLoading) {
+    return (
+      <ConfigProvider locale={zhCN} theme={uiStyleOption.theme}>
+        <div className="state-panel app-loading">
+          <Spin />
+        </div>
+      </ConfigProvider>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <ConfigProvider locale={zhCN} theme={uiStyleOption.theme}>
+        <LoginPage
+          loading={login.isPending}
+          onLogin={async (values) => {
+            try {
+              await login.mutateAsync(values);
+            } catch {
+              // Login errors are surfaced through the mutation message handler.
+            }
+          }}
+        />
+      </ConfigProvider>
+    );
+  }
+
   return (
     <ConfigProvider locale={zhCN} theme={uiStyleOption.theme}>
       <div className="app-shell">
         <header className="app-header">
           <div>
             <Typography.Title level={2} className="app-title">
-              {boardQuery.data?.project.name ?? "CatKanBan 项目看板"}
+              {boardQuery.data?.project.name ?? "CatKanBan"}
             </Typography.Title>
             <Typography.Text type="secondary">单项目任务计划、状态推进和时间线跟踪</Typography.Text>
           </div>
@@ -140,12 +218,20 @@ export default function App() {
             <Button type="primary" icon={<Plus size={16} />} onClick={openCreateDrawer}>
               新建任务
             </Button>
+            {currentUser.role === "admin" ? (
+              <Tooltip title="用户管理">
+                <Button aria-label="用户管理" icon={<Users size={16} />} onClick={() => setUsersOpen(true)} />
+              </Tooltip>
+            ) : null}
             <Tooltip title="界面设置">
-              <Button
-                aria-label="界面设置"
-                icon={<Settings size={16} />}
-                onClick={() => setSettingsOpen(true)}
-              />
+              <Button aria-label="界面设置" icon={<Settings size={16} />} onClick={() => setSettingsOpen(true)} />
+            </Tooltip>
+            <div className="current-user">
+              <Typography.Text strong>{currentUser.name}</Typography.Text>
+              <Typography.Text type="secondary">{currentUser.role === "admin" ? "管理员" : "成员"}</Typography.Text>
+            </div>
+            <Tooltip title="退出登录">
+              <Button aria-label="退出登录" icon={<LogOut size={16} />} loading={logout.isPending} onClick={() => logout.mutate()} />
             </Tooltip>
           </div>
         </header>
@@ -156,6 +242,7 @@ export default function App() {
           open={drawerOpen}
           task={editingTask}
           columns={boardQuery.data?.columns ?? []}
+          users={boardQuery.data?.users ?? []}
           onClose={() => setDrawerOpen(false)}
           onSubmit={handleSubmit}
         />
@@ -165,6 +252,7 @@ export default function App() {
           onChange={setUiStyle}
           onClose={() => setSettingsOpen(false)}
         />
+        <UserManagementDrawer open={usersOpen} onClose={() => setUsersOpen(false)} />
       </div>
     </ConfigProvider>
   );

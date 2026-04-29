@@ -2,14 +2,13 @@ import {
   DEFAULT_COLUMNS,
   DEFAULT_PROJECT_ID,
   type BoardColumn,
-  type BoardPayload,
   type CreateTaskRequest,
   type MoveTaskRequest,
   type Project,
   type Task
 } from "../../../../packages/shared/src/index.js";
 import { NotFoundError } from "../errors.js";
-import type { BoardRepository, TaskUpdateData } from "./boardRepository.js";
+import type { BoardData, BoardRepository, TaskUpdateData } from "./boardRepository.js";
 
 const nowIso = () => new Date().toISOString();
 
@@ -43,7 +42,7 @@ export class MemoryBoardRepository implements BoardRepository {
     return undefined;
   }
 
-  async getBoard(): Promise<BoardPayload> {
+  async getBoard(): Promise<BoardData> {
     return {
       project: this.project,
       columns: this.columns
@@ -76,6 +75,7 @@ export class MemoryBoardRepository implements BoardRepository {
       priority: input.priority,
       progress: input.progress ?? 0,
       assigneeName: input.assigneeName ?? "",
+      assigneeId: input.assigneeId ?? null,
       position,
       createdAt: timestamp,
       updatedAt: timestamp
@@ -91,7 +91,8 @@ export class MemoryBoardRepository implements BoardRepository {
       ...task,
       ...input,
       description: input.description ?? task.description,
-      assigneeName: input.assigneeName ?? task.assigneeName,
+      assigneeId: input.assigneeId === undefined ? task.assigneeId : input.assigneeId,
+      assigneeName: input.assigneeId === null ? "" : input.assigneeName ?? task.assigneeName,
       updatedAt: nowIso()
     };
     this.tasks = this.tasks.map((candidate) => (candidate.id === id ? updated : candidate));
