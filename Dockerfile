@@ -24,11 +24,23 @@ RUN pnpm --filter @catkanban/web exec vite build
 FROM node:22-alpine AS runtime
 
 WORKDIR /app
+RUN apk add --no-cache postgresql17 su-exec
+
 ENV NODE_ENV=production
 ENV API_HOST=0.0.0.0
 ENV API_PORT=3000
 ENV COOKIE_SECURE=false
 ENV WEB_DIST_DIR=/app/apps/web/dist
+ENV PGDATA=/var/lib/postgresql/data
+ENV POSTGRES_HOST=127.0.0.1
+ENV POSTGRES_PORT=5432
+ENV POSTGRES_DB=catkanban
+ENV POSTGRES_USER=catkanban
+ENV POSTGRES_PASSWORD=catkanban
+ENV ADMIN_USERNAME=admin
+ENV ADMIN_PASSWORD=admin12345
+ENV ADMIN_NAME="CatKanBan Admin"
+ENV CATKANBAN_INTERNAL_POSTGRES=auto
 
 COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
 COPY --from=builder /app/node_modules node_modules
@@ -39,7 +51,10 @@ COPY --from=builder /app/apps/api/node_modules apps/api/node_modules
 COPY --from=builder /app/apps/api/dist apps/api/dist
 COPY --from=builder /app/apps/api/prisma apps/api/prisma
 COPY --from=builder /app/apps/api/docker-entrypoint.mjs apps/api/docker-entrypoint.mjs
+COPY --from=builder /app/apps/api/docker-standalone-entrypoint.sh apps/api/docker-standalone-entrypoint.sh
 COPY --from=builder /app/apps/web/dist apps/web/dist
+RUN chmod +x apps/api/docker-standalone-entrypoint.sh
 
 EXPOSE 3000
-CMD ["node", "apps/api/docker-entrypoint.mjs"]
+VOLUME ["/var/lib/postgresql/data"]
+CMD ["/app/apps/api/docker-standalone-entrypoint.sh"]
