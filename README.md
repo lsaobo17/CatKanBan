@@ -96,6 +96,15 @@ DockerHub Automated Build 建议配置：
 - `ADMIN_PASSWORD`
 - `COOKIE_SECURE=false`，如果通过 HTTP 访问
 
+如果使用 DockerHub/GHCR 已发布镜像，推荐使用 `compose.image.yaml` 同时启动应用和 PostgreSQL：
+
+```powershell
+Copy-Item .env.example .env
+docker compose -f compose.image.yaml up -d
+```
+
+单独启动 `catkanban` 应用镜像不会自动创建 PostgreSQL。Docker 管理界面中如果只运行了一个 `catkanban` 容器，需要再创建 PostgreSQL 容器，并把数据库连接环境变量填到 `catkanban` 容器里。应用镜像在未设置 `DATABASE_URL` 时会默认尝试连接 `db:5432`，因此 PostgreSQL 容器或 Compose 服务名应为 `db`，或者显式设置 `POSTGRES_HOST`。
+
 示例：
 
 ```powershell
