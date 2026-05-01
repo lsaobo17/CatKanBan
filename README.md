@@ -92,7 +92,7 @@ DockerHub Automated Build 建议配置：
 
 镜像运行时至少需要配置：
 
-- `DATABASE_URL`
+- `DATABASE_URL`，或下面示例中的 `POSTGRES_HOST`、`POSTGRES_PORT`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`
 - `ADMIN_PASSWORD`
 - `COOKIE_SECURE=false`，如果通过 HTTP 访问
 
@@ -100,7 +100,11 @@ DockerHub Automated Build 建议配置：
 
 ```powershell
 docker run --rm -p 8080:3000 `
-  -e DATABASE_URL="postgresql://catkanban:password@host.docker.internal:5432/catkanban?schema=public" `
+  -e POSTGRES_HOST="host.docker.internal" `
+  -e POSTGRES_PORT="5432" `
+  -e POSTGRES_DB="catkanban" `
+  -e POSTGRES_USER="catkanban" `
+  -e POSTGRES_PASSWORD="password" `
   -e ADMIN_USERNAME="admin" `
   -e ADMIN_PASSWORD="change-this-admin-password" `
   -e COOKIE_SECURE="false" `

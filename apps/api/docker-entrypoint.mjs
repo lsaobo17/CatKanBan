@@ -1,10 +1,20 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 
-if (!process.env.DATABASE_URL?.trim()) {
-  console.error("DATABASE_URL is required at runtime. Set it to a PostgreSQL connection string.");
+const databaseUrl = resolveDatabaseUrl();
+
+if (!databaseUrl) {
+  console.error(
+    [
+      "Database configuration is missing.",
+      "Set DATABASE_URL to a PostgreSQL connection string, or set POSTGRES_HOST, POSTGRES_USER, POSTGRES_PASSWORD, and POSTGRES_DB.",
+      "Docker Compose users should start this project with compose.yaml instead of running the app image by itself."
+    ].join("\n")
+  );
   process.exit(1);
 }
+
+process.env.DATABASE_URL = databaseUrl;
 
 const prismaCliCandidates = [
   "apps/api/node_modules/prisma/build/index.js",
@@ -45,3 +55,28 @@ migration.on("exit", async (code, signal) => {
     process.exit(1);
   }
 });
+
+function resolveDatabaseUrl() {
+  const directUrl = readEnv("DATABASE_URL");
+  if (directUrl) {
+    return directUrl;
+  }
+
+  const postgresEnvKeys = ["POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"];
+  if (!postgresEnvKeys.some((key) => readEnv(key))) {
+    return null;
+  }
+
+  const host = readEnv("POSTGRES_HOST") ?? "db";
+  const port = readEnv("POSTGRES_PORT") ?? "5432";
+  const database = readEnv("POSTGRES_DB") ?? "catkanban";
+  const user = readEnv("POSTGRES_USER") ?? "catkanban";
+  const password = readEnv("POSTGRES_PASSWORD") ?? "catkanban";
+
+  return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}?schema=public`;
+}
+
+function readEnv(name) {
+  const value = process.env[name]?.trim();
+  return value ? value : null;
+}
