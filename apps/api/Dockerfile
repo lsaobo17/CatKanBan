@@ -11,7 +11,8 @@ RUN pnpm install --frozen-lockfile
 COPY packages/shared packages/shared
 COPY apps/api apps/api
 RUN pnpm --filter @catkanban/shared exec tsc -p tsconfig.json
-RUN pnpm --filter @catkanban/api exec prisma generate
+# prisma generate validates env("DATABASE_URL") during build but does not connect.
+RUN DATABASE_URL="postgresql://catkanban:catkanban@localhost:5432/catkanban?schema=public" pnpm --filter @catkanban/api exec prisma generate
 RUN pnpm --filter @catkanban/api exec tsc -p tsconfig.json --noEmit
 RUN pnpm --filter @catkanban/api exec tsup src/index.ts --format esm --platform node --target node22 --out-dir dist --sourcemap --clean
 
