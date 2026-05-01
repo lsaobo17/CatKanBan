@@ -10,11 +10,12 @@ COPY apps/web/package.json apps/web/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY packages/shared packages/shared
+COPY scripts/prisma-generate.mjs scripts/prisma-generate.mjs
 COPY apps/api apps/api
 COPY apps/web apps/web
 RUN pnpm --filter @catkanban/shared exec tsc -p tsconfig.json
 # prisma generate validates env("DATABASE_URL") during build but does not connect.
-RUN DATABASE_URL="postgresql://catkanban:catkanban@localhost:5432/catkanban?schema=public" pnpm --filter @catkanban/api exec prisma generate
+RUN node scripts/prisma-generate.mjs
 RUN pnpm --filter @catkanban/api exec tsc -p tsconfig.json --noEmit
 RUN pnpm --filter @catkanban/api exec tsup src/index.ts --format esm --platform node --target node22 --out-dir dist --sourcemap --clean
 RUN pnpm --filter @catkanban/web exec tsc -p tsconfig.json
@@ -37,7 +38,8 @@ COPY --from=builder /app/apps/api/package.json apps/api/package.json
 COPY --from=builder /app/apps/api/node_modules apps/api/node_modules
 COPY --from=builder /app/apps/api/dist apps/api/dist
 COPY --from=builder /app/apps/api/prisma apps/api/prisma
+COPY --from=builder /app/apps/api/docker-entrypoint.mjs apps/api/docker-entrypoint.mjs
 COPY --from=builder /app/apps/web/dist apps/web/dist
 
 EXPOSE 3000
-CMD ["sh", "-c", "if [ -z \"$DATABASE_URL\" ]; then echo \"DATABASE_URL is required at runtime. Set it to a PostgreSQL connection string.\" >&2; exit 1; fi; node apps/api/node_modules/prisma/build/index.js migrate deploy --schema apps/api/prisma/schema.prisma && node apps/api/dist/index.js"]
+CMD ["node", "apps/api/docker-entrypoint.mjs"]
