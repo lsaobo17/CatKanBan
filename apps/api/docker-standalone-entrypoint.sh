@@ -47,15 +47,16 @@ start_internal_postgres() {
   chmod 700 "$PGDATA"
 
   if [ ! -f "$PGDATA/PG_VERSION" ]; then
-    printf '%s' "$POSTGRES_PASSWORD" > /tmp/catkanban-postgres-password
-    chmod 600 /tmp/catkanban-postgres-password
+    password_file="$PGDATA/.catkanban-postgres-password"
+    su-exec postgres sh -c 'printf "%s" "$POSTGRES_PASSWORD" > "$1"' sh "$password_file"
+    chmod 600 "$password_file"
     su-exec postgres initdb \
       --pgdata="$PGDATA" \
       --username="$POSTGRES_USER" \
-      --pwfile=/tmp/catkanban-postgres-password \
+      --pwfile="$password_file" \
       --auth-local=trust \
       --auth-host=scram-sha-256
-    rm -f /tmp/catkanban-postgres-password
+    rm -f "$password_file"
   fi
 
   su-exec postgres pg_ctl \
