@@ -64,7 +64,10 @@ start_internal_postgres() {
     -o "-c listen_addresses='localhost' -c unix_socket_directories='$postgres_run_dir' -p $POSTGRES_PORT" \
     -w start
 
-  ensure_internal_database
+  if ! ensure_internal_database; then
+    su-exec postgres pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
+    return 1
+  fi
 }
 
 normalize_pgdata() {
@@ -109,14 +112,16 @@ initialize_internal_postgres() {
 
 ensure_internal_database() {
   export PGPASSWORD="$POSTGRES_PASSWORD"
+  escaped_database="$(
+    printf '%s' "$POSTGRES_DB" | sed "s/'/''/g"
+  )"
   database_exists="$(
     psql \
       -h "$POSTGRES_HOST" \
       -p "$POSTGRES_PORT" \
       -U "$POSTGRES_USER" \
       -d postgres \
-      -v "db=$POSTGRES_DB" \
-      -tAc "SELECT 1 FROM pg_database WHERE datname = :'db'"
+      -tAc "SELECT 1 FROM pg_database WHERE datname = '$escaped_database'"
   )"
 
   if [ "$database_exists" != "1" ]; then
