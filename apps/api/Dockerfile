@@ -31,4 +31,4 @@ COPY --from=builder /app/apps/api/dist apps/api/dist
 COPY --from=builder /app/apps/api/prisma apps/api/prisma
 
 EXPOSE 3000
-CMD ["sh", "-c", "node apps/api/node_modules/prisma/build/index.js migrate deploy --schema apps/api/prisma/schema.prisma && node apps/api/dist/index.js"]
+CMD ["sh", "-c", "if [ -z \"$DATABASE_URL\" ]; then echo \"DATABASE_URL is required at runtime. Set it to a PostgreSQL connection string.\" >&2; exit 1; fi; node apps/api/node_modules/prisma/build/index.js migrate deploy --schema apps/api/prisma/schema.prisma && node apps/api/dist/index.js"]
