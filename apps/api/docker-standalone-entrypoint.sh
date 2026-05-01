@@ -1,13 +1,17 @@
 #!/bin/sh
 set -eu
 
-: "${PGDATA:=/var/lib/postgresql/data}"
+: "${POSTGRES_VOLUME_DIR:=/var/lib/postgresql/data}"
+if [ -z "${PGDATA:-}" ]; then
+  PGDATA="${POSTGRES_VOLUME_DIR%/}/pgdata"
+fi
 : "${POSTGRES_HOST:=127.0.0.1}"
 : "${POSTGRES_PORT:=5432}"
 : "${POSTGRES_DB:=catkanban}"
 : "${POSTGRES_USER:=catkanban}"
 : "${POSTGRES_PASSWORD:=catkanban}"
 
+export POSTGRES_VOLUME_DIR
 export PGDATA
 export POSTGRES_HOST
 export POSTGRES_PORT
@@ -42,28 +46,66 @@ should_start_internal_postgres() {
 }
 
 start_internal_postgres() {
-  mkdir -p "$PGDATA"
-  chown postgres:postgres "$PGDATA"
+  normalize_pgdata
+  postgres_parent_dir="$(dirname "$PGDATA")"
+
+  mkdir -p "$postgres_parent_dir" "$PGDATA"
+  chown postgres:postgres "$postgres_parent_dir" "$PGDATA"
   chmod 700 "$PGDATA"
 
   if [ ! -f "$PGDATA/PG_VERSION" ]; then
-    password_file="$PGDATA/.catkanban-postgres-password"
-    su-exec postgres sh -c 'printf "%s" "$POSTGRES_PASSWORD" > "$1"' sh "$password_file"
-    chmod 600 "$password_file"
-    su-exec postgres initdb \
-      --pgdata="$PGDATA" \
-      --username="$POSTGRES_USER" \
-      --pwfile="$password_file" \
-      --auth-local=trust \
-      --auth-host=scram-sha-256
-    rm -f "$password_file"
+    initialize_internal_postgres "$postgres_parent_dir"
   fi
 
   su-exec postgres pg_ctl \
     -D "$PGDATA" \
-    -o "-c listen_addresses='127.0.0.1' -p $POSTGRES_PORT" \
+    -o "-c listen_addresses='localhost' -p $POSTGRES_PORT" \
     -w start
 
+  ensure_internal_database
+}
+
+normalize_pgdata() {
+  volume_dir="${POSTGRES_VOLUME_DIR%/}"
+  default_pgdata="$volume_dir/pgdata"
+  current_pgdata="${PGDATA%/}"
+
+  if [ -f "$volume_dir/PG_VERSION" ] && [ "$current_pgdata" = "$default_pgdata" ]; then
+    PGDATA="$volume_dir"
+    export PGDATA
+    return
+  fi
+
+  if [ "$current_pgdata" = "$volume_dir" ] && [ ! -f "$volume_dir/PG_VERSION" ]; then
+    PGDATA="$default_pgdata"
+    export PGDATA
+  fi
+}
+
+initialize_internal_postgres() {
+  postgres_parent_dir="$1"
+  password_file="$postgres_parent_dir/.catkanban-postgres-password"
+
+  rm -f "$password_file"
+  su-exec postgres sh -c 'umask 077; printf "%s" "$POSTGRES_PASSWORD" > "$1"' sh "$password_file"
+
+  set +e
+  su-exec postgres initdb \
+    --pgdata="$PGDATA" \
+    --username="$POSTGRES_USER" \
+    --pwfile="$password_file" \
+    --auth-local=trust \
+    --auth-host=scram-sha-256
+  initdb_status="$?"
+  set -e
+
+  rm -f "$password_file"
+  if [ "$initdb_status" -ne 0 ]; then
+    return "$initdb_status"
+  fi
+}
+
+ensure_internal_database() {
   export PGPASSWORD="$POSTGRES_PASSWORD"
   database_exists="$(
     psql \

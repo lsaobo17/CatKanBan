@@ -102,7 +102,7 @@ docker run --rm -p 8080:3000 -v catkanban-data:/var/lib/postgresql/data ghcr.io/
 docker compose -f compose.standalone.yaml up --build -d
 ```
 
-默认访问地址为 http://localhost:8080。首次启动会初始化内置 PostgreSQL，自动执行 Prisma migration deploy，然后创建或更新默认项目列和默认管理员账号。
+默认访问地址为 http://localhost:8080。首次启动会初始化内置 PostgreSQL，自动执行 Prisma migration deploy，然后创建或更新默认项目列和默认管理员账号。持久化存储建议挂载到 `/var/lib/postgresql/data`，PostgreSQL 实际数据目录会放在这个挂载点下的 `pgdata` 子目录，避免 Docker 管理界面或存储驱动在挂载点根目录生成隐藏文件时影响 `initdb`。
 
 单容器镜像内置默认值：
 
@@ -111,6 +111,8 @@ docker compose -f compose.standalone.yaml up --build -d
 - `POSTGRES_DB=catkanban`
 - `POSTGRES_USER=catkanban`
 - `POSTGRES_PASSWORD=catkanban`
+- `POSTGRES_VOLUME_DIR=/var/lib/postgresql/data`
+- `PGDATA=/var/lib/postgresql/data/pgdata`
 - `ADMIN_USERNAME=admin`
 - `ADMIN_PASSWORD=admin12345`
 - `COOKIE_SECURE=false`
