@@ -1,4 +1,7 @@
 import { DEFAULT_PROJECT_ID, type Task } from "../../../packages/shared/src/index.js";
+import { mkdir, mkdtemp, rm, rmdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MemoryBoardRepository } from "../src/repositories/memoryBoardRepository.js";
 import { MemoryUserRepository } from "../src/repositories/memoryUserRepository.js";
@@ -24,6 +27,10 @@ const createTask = (overrides: Partial<Task> = {}): Task => ({
   updatedAt: new Date().toISOString(),
   ...overrides
 });
+
+const ORIGINAL_COOKIE_SECURE = process.env.COOKIE_SECURE;
+const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
+const ORIGINAL_WEB_DIST_DIR = process.env.WEB_DIST_DIR;
 
 describe("api server", () => {
   let repository: MemoryBoardRepository;
@@ -59,6 +66,9 @@ describe("api server", () => {
 
   afterEach(async () => {
     await server.close();
+    restoreEnv("COOKIE_SECURE", ORIGINAL_COOKIE_SECURE);
+    restoreEnv("NODE_ENV", ORIGINAL_NODE_ENV);
+    restoreEnv("WEB_DIST_DIR", ORIGINAL_WEB_DIST_DIR);
   });
 
   it("returns health status", async () => {
@@ -89,6 +99,59 @@ describe("api server", () => {
     });
     expect(meResponse.statusCode).toBe(200);
     expect(meResponse.json()).toMatchObject({ user: { username: "admin", role: "admin" } });
+  });
+
+  it("can disable secure cookies for http docker deployments", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.COOKIE_SECURE = "false";
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { username: "admin", password: "admin12345" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(String(response.headers["set-cookie"])).not.toContain("Secure");
+  });
+
+  it("can force secure cookies for https deployments", async () => {
+    process.env.COOKIE_SECURE = "true";
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { username: "admin", password: "admin12345" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(String(response.headers["set-cookie"])).toContain("Secure");
+  });
+
+  it("serves the built web app when configured for a single image", async () => {
+    await server.close();
+    const webDistDir = await createWebDistFixture();
+    process.env.WEB_DIST_DIR = webDistDir;
+    server = buildServer({ repository, userRepository, logger: false });
+    await server.ready();
+
+    try {
+      const indexResponse = await server.inject({ method: "GET", url: "/" });
+      expect(indexResponse.statusCode).toBe(200);
+      expect(indexResponse.headers["content-type"]).toContain("text/html");
+      expect(indexResponse.body).toContain("CatKanBan shell");
+
+      const fallbackResponse = await server.inject({ method: "GET", url: "/board" });
+      expect(fallbackResponse.statusCode).toBe(200);
+      expect(fallbackResponse.body).toContain("CatKanBan shell");
+
+      const assetResponse = await server.inject({ method: "GET", url: "/assets/app.js" });
+      expect(assetResponse.statusCode).toBe(200);
+      expect(assetResponse.headers["cache-control"]).toContain("immutable");
+      expect(assetResponse.body).toContain("console.log");
+    } finally {
+      await cleanupWebDistFixture(webDistDir);
+    }
   });
 
   it("creates, updates, moves, and deletes tasks", async () => {
@@ -227,4 +290,29 @@ describe("api server", () => {
 function readCookie(value: string | string[] | number | undefined) {
   const header = Array.isArray(value) ? value[0] : String(value ?? "");
   return header.split(";")[0];
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+
+  process.env[name] = value;
+}
+
+async function createWebDistFixture() {
+  const root = await mkdtemp(join(tmpdir(), "catkanban-web-"));
+  const assetsDir = join(root, "assets");
+  await mkdir(assetsDir);
+  await writeFile(join(root, "index.html"), "<!doctype html><title>CatKanBan shell</title>");
+  await writeFile(join(assetsDir, "app.js"), "console.log('catkanban');");
+  return root;
+}
+
+async function cleanupWebDistFixture(root: string) {
+  await rm(join(root, "assets", "app.js"), { force: true });
+  await rm(join(root, "index.html"), { force: true });
+  await rmdir(join(root, "assets"));
+  await rmdir(root);
 }

@@ -6,19 +6,27 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY packages/shared packages/shared
 COPY apps/api apps/api
+COPY apps/web apps/web
 RUN pnpm --filter @catkanban/shared exec tsc -p tsconfig.json
 RUN pnpm --filter @catkanban/api exec prisma generate
 RUN pnpm --filter @catkanban/api exec tsc -p tsconfig.json --noEmit
 RUN pnpm --filter @catkanban/api exec tsup src/index.ts --format esm --platform node --target node22 --out-dir dist --sourcemap --clean
+RUN pnpm --filter @catkanban/web exec tsc -p tsconfig.json
+RUN pnpm --filter @catkanban/web exec vite build
 
 FROM node:22-alpine AS runtime
 
 WORKDIR /app
 ENV NODE_ENV=production
+ENV API_HOST=0.0.0.0
+ENV API_PORT=3000
+ENV COOKIE_SECURE=false
+ENV WEB_DIST_DIR=/app/apps/web/dist
 
 COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
 COPY --from=builder /app/node_modules node_modules
@@ -28,6 +36,7 @@ COPY --from=builder /app/apps/api/package.json apps/api/package.json
 COPY --from=builder /app/apps/api/node_modules apps/api/node_modules
 COPY --from=builder /app/apps/api/dist apps/api/dist
 COPY --from=builder /app/apps/api/prisma apps/api/prisma
+COPY --from=builder /app/apps/web/dist apps/web/dist
 
 EXPOSE 3000
 CMD ["sh", "-c", "node apps/api/node_modules/prisma/build/index.js migrate deploy --schema apps/api/prisma/schema.prisma && node apps/api/dist/index.js"]

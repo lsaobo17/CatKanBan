@@ -1,5 +1,8 @@
 import cors from "@fastify/cors";
-import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import { createReadStream } from "node:fs";
+import { access, stat } from "node:fs/promises";
+import path from "node:path";
 import { AppError } from "./errors.js";
 import type { BoardRepository } from "./repositories/boardRepository.js";
 import type { UserRepository } from "./repositories/userRepository.js";
@@ -51,13 +54,13 @@ export function buildServer({ repository, userRepository, logger }: BuildServerO
 
   server.post("/api/auth/login", async (request, reply) => {
     const session = await authService.login(request.body);
-    setSessionCookie(reply, session.token, session.maxAge);
+    setSessionCookie(reply, request, session.token, session.maxAge);
     return { user: session.user };
   });
 
   server.post("/api/auth/logout", async (request, reply) => {
     await authService.logout(request.headers.cookie);
-    clearSessionCookie(reply);
+    clearSessionCookie(reply, request);
     reply.status(204).send();
   });
 
@@ -112,22 +115,123 @@ export function buildServer({ repository, userRepository, logger }: BuildServerO
     reply.status(204).send();
   });
 
+  registerStaticWeb(server);
+
   return server;
+}
+
+function registerStaticWeb(server: FastifyInstance) {
+  const webDistDir = process.env.WEB_DIST_DIR;
+  if (!webDistDir) {
+    return;
+  }
+
+  const root = path.resolve(webDistDir);
+  server.get("/*", async (request, reply) => {
+    const requestPath = readRequestPath(request.url);
+    if (requestPath.startsWith("/api/")) {
+      reply.status(404).send({
+        error: "Not Found",
+        message: "API route not found"
+      });
+      return;
+    }
+
+    const file = await resolveStaticFile(root, requestPath);
+    if (!file) {
+      reply.status(404).send({
+        error: "Not Found",
+        message: "Static file not found"
+      });
+      return;
+    }
+
+    if (file.immutable) {
+      reply.header("Cache-Control", "public, max-age=31536000, immutable");
+    }
+
+    return reply.type(contentTypeFor(file.path)).send(createReadStream(file.path));
+  });
+}
+
+function readRequestPath(url: string) {
+  try {
+    return decodeURIComponent(new URL(url, "http://localhost").pathname);
+  } catch {
+    return "/";
+  }
+}
+
+async function resolveStaticFile(root: string, requestPath: string) {
+  const relativePath = requestPath === "/" ? "index.html" : requestPath.slice(1);
+  const filePath = path.resolve(root, relativePath);
+  if (isInside(root, filePath) && (await isFile(filePath))) {
+    return {
+      path: filePath,
+      immutable: requestPath.startsWith("/assets/")
+    };
+  }
+
+  if (requestPath.startsWith("/assets/") || path.extname(requestPath)) {
+    return null;
+  }
+
+  const indexPath = path.resolve(root, "index.html");
+  if (await isFile(indexPath)) {
+    return {
+      path: indexPath,
+      immutable: false
+    };
+  }
+
+  return null;
+}
+
+function isInside(root: string, target: string) {
+  const relative = path.relative(root, target);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function isFile(filePath: string) {
+  try {
+    await access(filePath);
+    return (await stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function contentTypeFor(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase();
+  const types: Record<string, string> = {
+    ".css": "text/css; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".ico": "image/x-icon",
+    ".js": "application/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
+    ".png": "image/png",
+    ".svg": "image/svg+xml; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".webp": "image/webp"
+  };
+
+  return types[extension] ?? "application/octet-stream";
 }
 
 async function requireUser(request: FastifyRequest, authService: AuthService) {
   return authService.getCurrentUser(request.headers.cookie);
 }
 
-function setSessionCookie(reply: FastifyReply, token: string, maxAge: number) {
-  reply.header("Set-Cookie", serializeCookie(SESSION_COOKIE_NAME, token, maxAge));
+function setSessionCookie(reply: FastifyReply, request: FastifyRequest, token: string, maxAge: number) {
+  reply.header("Set-Cookie", serializeCookie(SESSION_COOKIE_NAME, token, maxAge, request));
 }
 
-function clearSessionCookie(reply: FastifyReply) {
-  reply.header("Set-Cookie", serializeCookie(SESSION_COOKIE_NAME, "", 0));
+function clearSessionCookie(reply: FastifyReply, request: FastifyRequest) {
+  reply.header("Set-Cookie", serializeCookie(SESSION_COOKIE_NAME, "", 0, request));
 }
 
-function serializeCookie(name: string, value: string, maxAge: number) {
+function serializeCookie(name: string, value: string, maxAge: number, request: FastifyRequest) {
   const parts = [
     `${name}=${value}`,
     "HttpOnly",
@@ -136,9 +240,30 @@ function serializeCookie(name: string, value: string, maxAge: number) {
     `Max-Age=${maxAge}`
   ];
 
-  if (process.env.NODE_ENV === "production") {
+  if (shouldUseSecureCookie(request)) {
     parts.push("Secure");
   }
 
   return parts.join("; ");
+}
+
+function shouldUseSecureCookie(request: FastifyRequest) {
+  const mode = process.env.COOKIE_SECURE?.trim().toLowerCase() ?? "auto";
+  if (mode === "true" || mode === "1" || mode === "yes") {
+    return true;
+  }
+  if (mode === "false" || mode === "0" || mode === "no") {
+    return false;
+  }
+
+  return process.env.NODE_ENV === "production" || forwardedProtoIncludesHttps(request);
+}
+
+function forwardedProtoIncludesHttps(request: FastifyRequest) {
+  const value = request.headers["x-forwarded-proto"];
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .filter((item): item is string => typeof item === "string")
+    .flatMap((item) => item.split(","))
+    .some((item) => item.trim().toLowerCase() === "https");
 }
