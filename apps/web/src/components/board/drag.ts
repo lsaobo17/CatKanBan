@@ -47,6 +47,24 @@ export function resolveTaskMove(board: BoardPayload, activeId: string, overId: s
   };
 }
 
+export function resolveFinalTaskMove(startBoard: BoardPayload, finalBoard: BoardPayload, taskId: string): TaskMovePayload | null {
+  const startTask = findTask(startBoard, taskId);
+  const finalTask = findTask(finalBoard, taskId);
+  if (!startTask || !finalTask) {
+    return null;
+  }
+
+  if (startTask.columnId === finalTask.columnId && startTask.position === finalTask.position) {
+    return null;
+  }
+
+  return {
+    id: taskId,
+    columnId: finalTask.columnId,
+    position: finalTask.position
+  };
+}
+
 function findTask(board: BoardPayload, taskId: string): Task | undefined {
   return board.columns.flatMap((column) => column.tasks).find((task) => task.id === taskId);
 }

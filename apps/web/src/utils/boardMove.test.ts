@@ -1,6 +1,6 @@
 import type { BoardPayload } from "../../../../packages/shared/src/index";
 import { describe, expect, it } from "vitest";
-import { applyTaskMove } from "./boardMove";
+import { applyTaskCreate, applyTaskMove, removeTaskFromBoard, replaceTaskInBoard } from "./boardMove";
 
 const board: BoardPayload = {
   project: {
@@ -100,6 +100,75 @@ describe("applyTaskMove", () => {
     expect(nextBoard.columns[0].tasks.map((task) => [task.id, task.position])).toEqual([
       ["task-2", 0],
       ["task-1", 1]
+    ]);
+  });
+
+  it("clamps negative target positions to the start of the target column", () => {
+    const nextBoard = applyTaskMove(board, { id: "task-2", columnId: "column-doing", position: -10 });
+
+    expect(nextBoard.columns[1].tasks.map((task) => [task.id, task.position])).toEqual([
+      ["task-2", 0],
+      ["task-3", 1]
+    ]);
+  });
+
+  it("clamps oversized target positions to the end of the target column", () => {
+    const nextBoard = applyTaskMove(board, { id: "task-1", columnId: "column-doing", position: 99 });
+
+    expect(nextBoard.columns[1].tasks.map((task) => [task.id, task.position])).toEqual([
+      ["task-3", 0],
+      ["task-1", 1]
+    ]);
+  });
+
+  it("adds an optimistically created task at the end of its column", () => {
+    const nextBoard = applyTaskCreate(board, {
+      ...board.columns[0].tasks[0],
+      id: "optimistic-task-1",
+      title: "Optimistic task",
+      position: 2
+    });
+
+    expect(nextBoard.columns[0].tasks.map((task) => [task.id, task.position])).toEqual([
+      ["task-1", 0],
+      ["task-2", 1],
+      ["optimistic-task-1", 2]
+    ]);
+  });
+
+  it("replaces an optimistic task with the server task without duplicating it", () => {
+    const optimisticBoard = applyTaskCreate(board, {
+      ...board.columns[0].tasks[0],
+      id: "optimistic-task-1",
+      title: "Optimistic task",
+      position: 2
+    });
+    const nextBoard = replaceTaskInBoard(optimisticBoard, "optimistic-task-1", {
+      ...board.columns[0].tasks[0],
+      id: "task-created",
+      title: "Created task",
+      position: 2
+    });
+
+    expect(nextBoard.columns[0].tasks.map((task) => [task.id, task.position])).toEqual([
+      ["task-1", 0],
+      ["task-2", 1],
+      ["task-created", 2]
+    ]);
+  });
+
+  it("removes an optimistic task and reindexes the column after create failure", () => {
+    const optimisticBoard = applyTaskCreate(board, {
+      ...board.columns[0].tasks[0],
+      id: "optimistic-task-1",
+      title: "Optimistic task",
+      position: 1
+    });
+    const nextBoard = removeTaskFromBoard(optimisticBoard, "optimistic-task-1");
+
+    expect(nextBoard.columns[0].tasks.map((task) => [task.id, task.position])).toEqual([
+      ["task-1", 0],
+      ["task-2", 1]
     ]);
   });
 });

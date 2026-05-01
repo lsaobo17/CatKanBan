@@ -1,6 +1,7 @@
 import type { BoardPayload } from "../../../../../packages/shared/src/index";
 import { describe, expect, it, vi } from "vitest";
-import { createTaskMoveHandler, resolveTaskMove } from "./drag";
+import { applyTaskMove } from "../../utils/boardMove";
+import { createTaskMoveHandler, resolveFinalTaskMove, resolveTaskMove } from "./drag";
 
 const board: BoardPayload = {
   project: {
@@ -87,5 +88,48 @@ describe("drag helpers", () => {
       columnId: "column-done",
       position: 0
     });
+  });
+
+  it("resolves the final move from a cross-column drag preview", () => {
+    const previewBoard = applyTaskMove(board, { id: "task-1", columnId: "column-doing", position: 0 });
+
+    expect(resolveFinalTaskMove(board, previewBoard, "task-1")).toEqual({
+      id: "task-1",
+      columnId: "column-doing",
+      position: 0
+    });
+  });
+
+  it("resolves the final move from a same-column drag preview", () => {
+    const twoTaskBoard: BoardPayload = {
+      ...board,
+      columns: board.columns.map((column) =>
+        column.id === "column-todo"
+          ? {
+              ...column,
+              tasks: [
+                column.tasks[0],
+                {
+                  ...column.tasks[0],
+                  id: "task-1b",
+                  title: "Second task",
+                  position: 1
+                }
+              ]
+            }
+          : column
+      )
+    };
+    const previewBoard = applyTaskMove(twoTaskBoard, { id: "task-1", columnId: "column-todo", position: 1 });
+
+    expect(resolveFinalTaskMove(twoTaskBoard, previewBoard, "task-1")).toEqual({
+      id: "task-1",
+      columnId: "column-todo",
+      position: 1
+    });
+  });
+
+  it("does not submit a move when the preview returns to the original slot", () => {
+    expect(resolveFinalTaskMove(board, board, "task-1")).toBeNull();
   });
 });

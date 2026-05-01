@@ -9,6 +9,7 @@ import {
   pointerWithin,
   type CollisionDetection,
   type DragEndEvent,
+  type DragOverEvent,
   type DropAnimation,
   type DragStartEvent,
   useDroppable,
@@ -17,8 +18,10 @@ import {
 } from "@dnd-kit/core";
 import {
   SortableContext,
+  defaultAnimateLayoutChanges,
   sortableKeyboardCoordinates,
   useSortable,
+  type AnimateLayoutChanges,
   verticalListSortingStrategy
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -26,7 +29,8 @@ import { Button, Dropdown, Progress, Tag, Tooltip, Typography } from "antd";
 import { CalendarDays, GripVertical, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { BoardColumn, BoardPayload, MoveTaskRequest, Priority, Task } from "../../../../packages/shared/src/index";
-import { resolveTaskMove } from "./board/drag";
+import { applyTaskMove } from "../utils/boardMove";
+import { resolveFinalTaskMove, resolveTaskMove } from "./board/drag";
 
 const priorityLabels: Record<Priority, { label: string; color: string }> = {
   low: { label: "低", color: "blue" },
@@ -40,11 +44,24 @@ const pointerAwareCollisionDetection: CollisionDetection = (args) => {
   return pointerCollisions.length > 0 ? pointerCollisions : closestCorners(args);
 };
 
-const DROP_SETTLE_MS = 320;
+const DROP_SETTLE_MS = 210;
 
-const dragOverlayJellyDropAnimation: DropAnimation = {
+const taskCardSortingTransition = {
+  duration: 150,
+  easing: "cubic-bezier(0.2, 0, 0, 1)"
+};
+
+const animateTaskLayoutChanges: AnimateLayoutChanges = (args) => {
+  if (args.isSorting) {
+    return true;
+  }
+
+  return defaultAnimateLayoutChanges(args);
+};
+
+const dragOverlaySpringDropAnimation: DropAnimation = {
   duration: DROP_SETTLE_MS,
-  easing: "cubic-bezier(0.18, 0.9, 0.22, 1)",
+  easing: "cubic-bezier(0.2, 0.85, 0.25, 1)",
   sideEffects: defaultDropAnimationSideEffects({
     styles: {
       active: {
@@ -61,14 +78,14 @@ const dragOverlayJellyDropAnimation: DropAnimation = {
         transform: CSS.Transform.toString(initial)
       },
       {
-        offset: 0.72,
+        offset: 0.68,
         opacity: 1,
-        transform: CSS.Transform.toString({ ...final, scaleX: final.scaleX * 1.035, scaleY: final.scaleY * 0.965 })
+        transform: CSS.Transform.toString({ ...final, scaleX: final.scaleX * 1.018, scaleY: final.scaleY * 0.982 })
       },
       {
-        offset: 0.88,
+        offset: 0.86,
         opacity: 1,
-        transform: CSS.Transform.toString({ ...final, scaleX: final.scaleX * 0.985, scaleY: final.scaleY * 1.015 })
+        transform: CSS.Transform.toString({ ...final, scaleX: final.scaleX * 0.992, scaleY: final.scaleY * 1.008 })
       },
       {
         opacity: 1,
@@ -88,35 +105,51 @@ interface BoardViewProps {
 
 export function BoardView({ board, moving, onEditTask, onDeleteTask, onMoveTask }: BoardViewProps) {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const [settlingTaskId, setSettlingTaskId] = useState<string | null>(null);
+  const [previewBoard, setPreviewBoard] = useState<BoardPayload | null>(null);
+  const [overlayTask, setOverlayTask] = useState<Task | null>(null);
+  const [overlayWidth, setOverlayWidth] = useState<number | null>(null);
   const [dropAnimation, setDropAnimation] = useState<DropAnimation | null>(null);
   const clearOverlayFrameRef = useRef<number | null>(null);
-  const clearSettlingTimeoutRef = useRef<number | null>(null);
+  const clearPreviewTimeoutRef = useRef<number | null>(null);
+  const dragStartBoardRef = useRef<BoardPayload | null>(null);
+  const latestPreviewBoardRef = useRef<BoardPayload | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
-  const activeTask = useMemo(() => findTask(board, activeTaskId), [activeTaskId, board]);
+  const renderedBoard = previewBoard ?? board;
+  const overlayStyle = useMemo<CSSProperties | undefined>(
+    () => (overlayWidth ? { width: overlayWidth } : undefined),
+    [overlayWidth]
+  );
 
-  const clearActiveTask = useCallback(() => {
+  const clearActiveTask = useCallback((keepPreviewUntilDropSettles: boolean) => {
     if (clearOverlayFrameRef.current !== null) {
       window.cancelAnimationFrame(clearOverlayFrameRef.current);
     }
     clearOverlayFrameRef.current = window.requestAnimationFrame(() => {
       clearOverlayFrameRef.current = null;
       setActiveTaskId(null);
-    });
-  }, []);
+      setOverlayTask(null);
+      setOverlayWidth(null);
+      dragStartBoardRef.current = null;
+      latestPreviewBoardRef.current = null;
 
-  const settleDroppedTask = useCallback((taskId: string) => {
-    if (clearSettlingTimeoutRef.current !== null) {
-      window.clearTimeout(clearSettlingTimeoutRef.current);
-    }
-    setSettlingTaskId(taskId);
-    clearSettlingTimeoutRef.current = window.setTimeout(() => {
-      clearSettlingTimeoutRef.current = null;
-      setSettlingTaskId(null);
-    }, DROP_SETTLE_MS);
+      if (clearPreviewTimeoutRef.current !== null) {
+        window.clearTimeout(clearPreviewTimeoutRef.current);
+        clearPreviewTimeoutRef.current = null;
+      }
+
+      if (keepPreviewUntilDropSettles) {
+        clearPreviewTimeoutRef.current = window.setTimeout(() => {
+          clearPreviewTimeoutRef.current = null;
+          setPreviewBoard(null);
+        }, DROP_SETTLE_MS);
+        return;
+      }
+
+      setPreviewBoard(null);
+    });
   }, []);
 
   useEffect(() => {
@@ -126,8 +159,8 @@ export function BoardView({ board, moving, onEditTask, onDeleteTask, onMoveTask 
       if (clearOverlayFrameRef.current !== null) {
         window.cancelAnimationFrame(clearOverlayFrameRef.current);
       }
-      if (clearSettlingTimeoutRef.current !== null) {
-        window.clearTimeout(clearSettlingTimeoutRef.current);
+      if (clearPreviewTimeoutRef.current !== null) {
+        window.clearTimeout(clearPreviewTimeoutRef.current);
       }
     };
   }, [activeTaskId]);
@@ -137,34 +170,61 @@ export function BoardView({ board, moving, onEditTask, onDeleteTask, onMoveTask 
       window.cancelAnimationFrame(clearOverlayFrameRef.current);
       clearOverlayFrameRef.current = null;
     }
-    if (clearSettlingTimeoutRef.current !== null) {
-      window.clearTimeout(clearSettlingTimeoutRef.current);
-      clearSettlingTimeoutRef.current = null;
+    if (clearPreviewTimeoutRef.current !== null) {
+      window.clearTimeout(clearPreviewTimeoutRef.current);
+      clearPreviewTimeoutRef.current = null;
     }
-    setSettlingTaskId(null);
+    const taskId = String(event.active.id);
+    dragStartBoardRef.current = board;
+    latestPreviewBoardRef.current = board;
+    setPreviewBoard(board);
+    setOverlayTask(findTask(board, taskId));
+    setOverlayWidth(event.active.rect.current.initial?.width ?? null);
     setDropAnimation(null);
-    setActiveTaskId(String(event.active.id));
-  }, []);
+    setActiveTaskId(taskId);
+  }, [board]);
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    const overId = event.over?.id;
+    if (!overId) {
+      return;
+    }
+
+    const taskId = String(event.active.id);
+    const currentBoard = latestPreviewBoardRef.current ?? dragStartBoardRef.current ?? board;
+    const payload = resolveTaskMove(currentBoard, taskId, String(overId));
+    if (!payload) {
+      return;
+    }
+
+    const nextBoard = applyTaskMove(currentBoard, payload);
+    latestPreviewBoardRef.current = nextBoard;
+    setPreviewBoard(nextBoard);
+  }, [board]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const taskId = String(event.active.id);
-    if (event.over) {
-      const payload = resolveTaskMove(board, taskId, String(event.over.id));
-      if (payload) {
-        const sourceTask = findTask(board, taskId);
-        const statusChanged = sourceTask?.columnId !== payload.columnId;
-        setDropAnimation(statusChanged ? dragOverlayJellyDropAnimation : null);
-        onMoveTask(payload);
-        if (statusChanged) {
-          settleDroppedTask(taskId);
-        }
-      }
+    const startBoard = dragStartBoardRef.current ?? board;
+    const finalBoard = latestPreviewBoardRef.current ?? previewBoard ?? startBoard;
+    const payload = resolveFinalTaskMove(startBoard, finalBoard, taskId);
+
+    if (payload) {
+      setDropAnimation(dragOverlaySpringDropAnimation);
+      onMoveTask(payload);
+    } else {
+      setDropAnimation(null);
     }
-    clearActiveTask();
-  }, [board, clearActiveTask, onMoveTask, settleDroppedTask]);
+
+    clearActiveTask(Boolean(payload));
+  }, [board, clearActiveTask, onMoveTask, previewBoard]);
 
   const handleDragCancel = useCallback(() => {
     setDropAnimation(null);
+    setPreviewBoard(null);
+    setOverlayTask(null);
+    setOverlayWidth(null);
+    dragStartBoardRef.current = null;
+    latestPreviewBoardRef.current = null;
     setActiveTaskId(null);
   }, []);
 
@@ -172,24 +232,24 @@ export function BoardView({ board, moving, onEditTask, onDeleteTask, onMoveTask 
     <DndContext
       sensors={sensors}
       collisionDetection={pointerAwareCollisionDetection}
-      measuring={{ droppable: { strategy: MeasuringStrategy.BeforeDragging } }}
+      measuring={{ droppable: { strategy: MeasuringStrategy.WhileDragging } }}
       onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
       <div className="board-grid" aria-busy={moving}>
-        {board.columns.map((column) => (
+        {renderedBoard.columns.map((column) => (
           <BoardColumnView
             key={column.id}
             column={column}
-            settlingTaskId={settlingTaskId}
             onEditTask={onEditTask}
             onDeleteTask={onDeleteTask}
           />
         ))}
       </div>
-      <DragOverlay adjustScale={false} dropAnimation={dropAnimation}>
-        {activeTask ? <TaskDragOverlay task={activeTask} /> : null}
+      <DragOverlay adjustScale={false} dropAnimation={dropAnimation} style={overlayStyle}>
+        {overlayTask ? <TaskDragOverlay task={overlayTask} /> : null}
       </DragOverlay>
     </DndContext>
   );
@@ -197,12 +257,11 @@ export function BoardView({ board, moving, onEditTask, onDeleteTask, onMoveTask 
 
 interface BoardColumnViewProps {
   column: BoardColumn;
-  settlingTaskId: string | null;
   onEditTask: (task: Task) => void;
   onDeleteTask: (task: Task) => void;
 }
 
-const BoardColumnView = memo(function BoardColumnView({ column, settlingTaskId, onEditTask, onDeleteTask }: BoardColumnViewProps) {
+const BoardColumnView = memo(function BoardColumnView({ column, onEditTask, onDeleteTask }: BoardColumnViewProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: column.id,
     data: { type: "column", columnId: column.id }
@@ -221,7 +280,6 @@ const BoardColumnView = memo(function BoardColumnView({ column, settlingTaskId, 
             <TaskCard
               key={task.id}
               task={task}
-              settling={task.id === settlingTaskId}
               onEditTask={onEditTask}
               onDeleteTask={onDeleteTask}
             />
@@ -235,21 +293,22 @@ const BoardColumnView = memo(function BoardColumnView({ column, settlingTaskId, 
 
 interface TaskCardProps {
   task: Task;
-  settling?: boolean;
   onEditTask: (task: Task) => void;
   onDeleteTask: (task: Task) => void;
 }
 
-const TaskCard = memo(function TaskCard({ task, settling = false, onEditTask, onDeleteTask }: TaskCardProps) {
+const TaskCard = memo(function TaskCard({ task, onEditTask, onDeleteTask }: TaskCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
-    data: { type: "task", taskId: task.id }
+    animateLayoutChanges: animateTaskLayoutChanges,
+    data: { type: "task", taskId: task.id },
+    transition: taskCardSortingTransition
   });
   const style = useMemo<CSSProperties>(
     () => ({
       transform: isDragging ? undefined : CSS.Transform.toString(transform),
       transition: isDragging ? undefined : transition,
-      willChange: isDragging ? "transform" : undefined
+      willChange: transform ? "transform" : undefined
     }),
     [isDragging, transform, transition]
   );
@@ -257,7 +316,7 @@ const TaskCard = memo(function TaskCard({ task, settling = false, onEditTask, on
   return (
     <article
       ref={setNodeRef}
-      className={`task-card ${isDragging ? "is-dragging" : ""} ${settling ? "is-drop-settling" : ""}`}
+      className={`task-card ${isDragging ? "is-dragging" : ""}`}
       style={style}
     >
       <div className="task-card-head">

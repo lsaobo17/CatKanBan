@@ -97,14 +97,27 @@ export default function App() {
 
   const handleSubmit = useCallback(async (values: TaskFormValues) => {
     if (editingTask) {
-      await updateTask.mutateAsync({ id: editingTask.id, input: values as UpdateTaskRequest });
-      message.success("任务已更新");
-    } else {
-      await createTask.mutateAsync(values);
-      message.success("任务已创建");
+      try {
+        await updateTask.mutateAsync({ id: editingTask.id, input: values as UpdateTaskRequest });
+        message.success("任务已更新");
+        setDrawerOpen(false);
+        setEditingTask(null);
+      } catch {
+        message.error("任务更新失败，请稍后重试");
+      }
+      return;
     }
+
+    const createPromise = createTask.mutateAsync(values);
     setDrawerOpen(false);
     setEditingTask(null);
+
+    try {
+      await createPromise;
+      message.success("任务已创建");
+    } catch {
+      message.error("任务创建失败，请稍后重试");
+    }
   }, [createTask, editingTask, message, updateTask]);
 
   const handleDelete = useCallback(async (task: Task) => {
