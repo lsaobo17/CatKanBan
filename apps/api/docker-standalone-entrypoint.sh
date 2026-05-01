@@ -48,10 +48,12 @@ should_start_internal_postgres() {
 start_internal_postgres() {
   normalize_pgdata
   postgres_parent_dir="$(dirname "$PGDATA")"
+  postgres_run_dir="/run/postgresql"
 
-  mkdir -p "$postgres_parent_dir" "$PGDATA"
-  chown postgres:postgres "$postgres_parent_dir" "$PGDATA"
+  mkdir -p "$postgres_parent_dir" "$PGDATA" "$postgres_run_dir"
+  chown postgres:postgres "$postgres_parent_dir" "$PGDATA" "$postgres_run_dir"
   chmod 700 "$PGDATA"
+  chmod 775 "$postgres_run_dir"
 
   if [ ! -f "$PGDATA/PG_VERSION" ]; then
     initialize_internal_postgres "$postgres_parent_dir"
@@ -59,7 +61,7 @@ start_internal_postgres() {
 
   su-exec postgres pg_ctl \
     -D "$PGDATA" \
-    -o "-c listen_addresses='localhost' -p $POSTGRES_PORT" \
+    -o "-c listen_addresses='localhost' -c unix_socket_directories='$postgres_run_dir' -p $POSTGRES_PORT" \
     -w start
 
   ensure_internal_database
